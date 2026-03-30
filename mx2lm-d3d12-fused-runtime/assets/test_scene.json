@@ -1,0 +1,26 @@
+{
+  "scene_id": "test_scene_01",
+  "description": "Default test scene for MX2LM fused runtime validation",
+  "config": {
+    "entityCount": 4096,
+    "gridDimX": 64,
+    "gridDimY": 64,
+    "gridDimZ": 64,
+    "cellSize": 1.0,
+    "gridOrigin": [-32.0, -32.0, -32.0],
+    "neighborCap": 64,
+    "numExperts": 8,
+    "forceMax": 10000.0,
+    "eventThreshold": 100.0
+  },
+  "initial_state": {
+    "source": "random_seed_42",
+    "scxq2": "initial_state.scxq2"
+  },
+  "validation": {
+    "max_nan_count": 0,
+    "max_inf_count": 0,
+    "deterministic_replay": true,
+    "expected_event_rate": 0.05
+  }
+}
