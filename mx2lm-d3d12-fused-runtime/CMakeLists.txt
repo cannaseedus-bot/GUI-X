@@ -48,7 +48,24 @@ target_link_libraries(mx2lm PRIVATE
     dxgi.lib
     dxguid.lib
     d3dcompiler.lib
+    dxcompiler.lib   # DXC — required for inline shader compilation
 )
+
+# ── DXC headers (Windows SDK or standalone DXC package) ───────
+# Locate dxcapi.h — try Windows SDK first, then env var DXC_DIR
+find_path(DXC_INCLUDE_DIR dxcapi.h
+    PATHS
+        "$ENV{PROGRAMFILES\(X86\)}/Windows Kits/10/Include/10.0.22621.0/um"
+        "$ENV{PROGRAMFILES\(X86\)}/Windows Kits/10/Include/10.0.19041.0/um"
+        "$ENV{DXC_DIR}/inc"
+    DOC "Directory containing dxcapi.h"
+)
+if(DXC_INCLUDE_DIR)
+    target_include_directories(mx2lm PRIVATE ${DXC_INCLUDE_DIR})
+    message(STATUS "DXC headers: ${DXC_INCLUDE_DIR}")
+else()
+    message(WARNING "dxcapi.h not found — set DXC_DIR or install Windows SDK 10.0.19041+")
+endif()
 
 # ── DirectXMath (header-only, ships with Windows SDK) ─────────
 # No extra find needed — included via <DirectXMath.h>

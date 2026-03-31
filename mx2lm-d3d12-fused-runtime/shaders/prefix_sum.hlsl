@@ -2,12 +2,15 @@
 //  prefix_sum.hlsl
 //  MX2LM D3D12 Fused Runtime
 //
-//  Parallel exclusive prefix sum (scan) using shared memory.
-//  Used by grid_build when gridCellCount > 65536.
+//  Two-entry parallel exclusive prefix sum (Blelloch scan).
 //
-//  Algorithm: Blelloch work-efficient scan
-//  SM 6.0 — uses wave intrinsics (documented exception to
-//           deterministic_rules.md § no-wave-intrinsics)
+//  CSScan        — per-block scan, saves block totals
+//  CSAddBlockSums — adds block totals back to each element
+//
+//  Usage (for N elements):
+//    Dispatch CSScan        ceil(N/512) groups
+//    CPU: prefix-sum the blockSums array (or recurse)
+//    Dispatch CSAddBlockSums ceil(N/512) groups
 // ============================================================
 
 #include "common.hlsli"
@@ -20,43 +23,42 @@ cbuffer RootConstants : register(b0)
     uint pad2;
 }
 
-RWStructuredBuffer<uint> data    : register(u0);
-RWStructuredBuffer<uint> blockSums : register(u1);  // partial sums per block
+RWStructuredBuffer<uint> data      : register(u0);
+RWStructuredBuffer<uint> blockSums : register(u1);
 
-groupshared uint sharedData[512];
+groupshared uint gs[512];
 
+// ── Pass 1: Block-level exclusive scan ───────────────────────
 [numthreads(256, 1, 1)]
-void CSScan(uint3 gid  : SV_GroupID,
-            uint3 gtid : SV_GroupThreadID,
-            uint3 tid  : SV_DispatchThreadID)
+void CSScan(uint3 gtid : SV_GroupThreadID,
+            uint3 gid  : SV_GroupID)
 {
-    uint localIdx  = gtid.x;
-    uint globalIdx = tid.x * 2u;
+    uint base = gid.x * 512u;
+    uint a    = base + gtid.x * 2u;
+    uint b    = a + 1u;
 
-    // Load two elements per thread
-    sharedData[localIdx * 2u]      = (globalIdx     < elementCount) ? data[globalIdx]     : 0u;
-    sharedData[localIdx * 2u + 1u] = (globalIdx + 1u < elementCount) ? data[globalIdx + 1u] : 0u;
+    gs[gtid.x * 2u]      = (a < elementCount) ? data[a] : 0u;
+    gs[gtid.x * 2u + 1u] = (b < elementCount) ? data[b] : 0u;
     GroupMemoryBarrierWithGroupSync();
 
-    // Up-sweep (reduce)
+    // Up-sweep
     uint offset = 1u;
     for (uint d = 256u; d > 0u; d >>= 1)
     {
         GroupMemoryBarrierWithGroupSync();
-        if (localIdx < d)
+        if (gtid.x < d)
         {
-            uint ai = offset * (localIdx * 2u + 1u) - 1u;
-            uint bi = offset * (localIdx * 2u + 2u) - 1u;
-            sharedData[bi] += sharedData[ai];
+            uint ai = offset * (gtid.x * 2u + 1u) - 1u;
+            uint bi = offset * (gtid.x * 2u + 2u) - 1u;
+            gs[bi] += gs[ai];
         }
         offset <<= 1;
     }
 
-    // Save total and clear last element
-    if (localIdx == 0u)
-    {
-        blockSums[gid.x] = sharedData[511];
-        sharedData[511]  = 0u;
+    // Save block total, clear last element
+    if (gtid.x == 0u) {
+        blockSums[gid.x] = gs[511];
+        gs[511]          = 0u;
     }
 
     // Down-sweep
@@ -64,26 +66,31 @@ void CSScan(uint3 gid  : SV_GroupID,
     {
         offset >>= 1;
         GroupMemoryBarrierWithGroupSync();
-        if (localIdx < d)
+        if (gtid.x < d)
         {
-            uint ai  = offset * (localIdx * 2u + 1u) - 1u;
-            uint bi  = offset * (localIdx * 2u + 2u) - 1u;
-            uint tmp    = sharedData[ai];
-            sharedData[ai] = sharedData[bi];
-            sharedData[bi] += tmp;
+            uint ai = offset * (gtid.x * 2u + 1u) - 1u;
+            uint bi = offset * (gtid.x * 2u + 2u) - 1u;
+            uint tmp = gs[ai];
+            gs[ai]   = gs[bi];
+            gs[bi]  += tmp;
         }
     }
     GroupMemoryBarrierWithGroupSync();
 
-    // Write back
-    if (globalIdx     < elementCount) data[globalIdx]      = sharedData[localIdx * 2u];
-    if (globalIdx + 1u < elementCount) data[globalIdx + 1u] = sharedData[localIdx * 2u + 1u];
+    if (a < elementCount) data[a] = gs[gtid.x * 2u];
+    if (b < elementCount) data[b] = gs[gtid.x * 2u + 1u];
 }
 
-// ── Add block sums pass ───────────────────────────────────────
+// ── Pass 2: Add block prefix sums back ───────────────────────
+// Dispatch: same grid as CSScan (ceil(N/512))
 [numthreads(512, 1, 1)]
-void CSAddBlockSums(uint3 gid : SV_GroupID, uint3 tid : SV_DispatchThreadID)
+void CSAddBlockSums(uint3 tid : SV_DispatchThreadID,
+                    uint3 gid : SV_GroupID)
 {
-    if (tid.x < elementCount)
-        data[tid.x] += blockSums[gid.x];
+    uint i = tid.x;
+    if (i >= elementCount) return;
+
+    // Block 0's offset is 0 (prefix sum of blockSums[0..gid.x-1])
+    // blockSums has been prefix-summed on CPU between the two passes.
+    data[i] += blockSums[gid.x];
 }

@@ -38,13 +38,17 @@ function Find-Compiler {
 
 # ── Shader list: (hlsl, entry, output_cso) ───────────────────
 $shaders = @(
-    @{ src = "fused_attention_force_moe.hlsl"; entry = "CSMain";    out = "fused_attention_force_moe.cso" },
-    @{ src = "grid_build.hlsl";                entry = "CSCount";   out = "grid_build_count.cso"          },
-    @{ src = "grid_build.hlsl";                entry = "CSScan";    out = "grid_build_scan.cso"           },
-    @{ src = "grid_build.hlsl";                entry = "CSScatter"; out = "grid_build_scatter.cso"        },
-    @{ src = "prefix_sum.hlsl";                entry = "CSScan";    out = "prefix_sum.cso"                },
-    @{ src = "prefix_sum.hlsl";                entry = "CSAddBlockSums"; out = "prefix_sum_add.cso"       },
-    @{ src = "debug_visualize.hlsl";           entry = "CSMain";    out = "debug_visualize.cso"           }
+    # Fused kernel
+    @{ src = "fused_attention_force_moe.hlsl"; entry = "CSMain";         out = "fused_attention_force_moe.cso" },
+    # Grid build (3 entry points in same file)
+    @{ src = "grid_build.hlsl";                entry = "CSCount";        out = "grid_build_count.cso"          },
+    @{ src = "grid_build.hlsl";                entry = "CSScan";         out = "grid_build_scan.cso"           },
+    @{ src = "grid_build.hlsl";                entry = "CSScatter";      out = "grid_build_scatter.cso"        },
+    # Prefix sum (2 entry points)
+    @{ src = "prefix_sum.hlsl";                entry = "CSScan";         out = "prefix_sum.cso"                },
+    @{ src = "prefix_sum.hlsl";                entry = "CSAddBlockSums"; out = "prefix_sum_add.cso"            },
+    # Debug
+    @{ src = "debug_visualize.hlsl";           entry = "CSMain";         out = "debug_visualize.cso"           }
 )
 
 # ── Setup ─────────────────────────────────────────────────────
