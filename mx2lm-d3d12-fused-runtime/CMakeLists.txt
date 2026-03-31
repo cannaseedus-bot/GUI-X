@@ -23,7 +23,9 @@ set(SOURCES
     src/pipeline/pipeline_state.cpp
     src/pipeline/root_signature.cpp
     src/runtime/simulation.cpp
+    src/runtime/stream_manager.cpp
     src/scxq2/scxq2_loader.cpp
+    src/training/adamw_gpu.cpp
     src/debug/gpu_profiler.cpp
     src/debug/validation.cpp
 )
@@ -38,6 +40,7 @@ target_include_directories(mx2lm PRIVATE
     src/pipeline
     src/runtime
     src/scxq2
+    src/training
     src/debug
     src/math
 )

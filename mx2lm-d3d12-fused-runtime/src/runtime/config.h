@@ -22,12 +22,20 @@ struct Config {
 
     // ── Runtime ───────────────────────────────────────────────
     uint32_t maxSteps       = 0;        // 0 = unlimited
-    bool     enableReadback = false;    // debug only
-    bool     enableViz      = false;    // debug overlay
-    bool     enableDebugLayer = false;  // D3D12 debug layer
+    bool     enableReadback = false;
+    bool     enableViz      = false;
+    bool     enableDebugLayer = false;
 
-    // ── SCXQ2 ─────────────────────────────────────────────────
-    const char* scxq2Path   = nullptr;  // nullptr = generate random initial state
+    // ── SCXQ2 / State ─────────────────────────────────────────
+    const char* scxq2Path   = nullptr;
+
+    // ── VRAM Streaming ────────────────────────────────────────
+    uint64_t vramBudgetBytes = 8ull * 1024 * 1024 * 1024;  // 8 GB default
+
+    // ── Training (AdamW + LoRA) ───────────────────────────────
+    bool     enableTraining = false;
+    float    trainLr        = 1e-4f;
+    uint32_t loraRank       = 4;
 
     // ── Computed ──────────────────────────────────────────────
     uint32_t gridCellCount() const {

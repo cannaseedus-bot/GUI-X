@@ -13,7 +13,10 @@ std::string PipelineState::ShaderFileName(ShaderType type) {
         case ShaderType::GridBuildScan:          return "grid_build_scan.cso";
         case ShaderType::GridBuildScatter:       return "grid_build_scatter.cso";
         case ShaderType::PrefixSum:              return "prefix_sum.cso";
+        case ShaderType::PrefixSumAddBlocks:     return "prefix_sum_add.cso";
         case ShaderType::DebugVisualize:         return "debug_visualize.cso";
+        case ShaderType::AdamW:                  return "adamw.cso";
+        case ShaderType::LoRAUpdate:             return "lora_update.cso";
         default: throw std::runtime_error("Unknown ShaderType");
     }
 }

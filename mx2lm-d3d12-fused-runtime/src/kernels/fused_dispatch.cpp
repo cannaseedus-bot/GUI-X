@@ -78,7 +78,19 @@ void FusedDispatch::Dispatch(ID3D12GraphicsCommandList* cmdList) {
     SetRootConstants(cmdList);
     BindBuffers(cmdList);
 
-    uint32_t groups = (m_cfg.entityCount + 127u) / 128u;
+    UINT groups = (m_cfg.entityCount + 127u) / 128u;
+    cmdList->Dispatch(groups, 1, 1);
+}
+
+// ── Free-function dispatch (used by main.cpp bootstrap path) ──
+void DispatchFused(ID3D12GraphicsCommandList* cmdList,
+                   ID3D12PipelineState*        pso,
+                   ID3D12RootSignature*         rootSig,
+                   uint32_t                     entityCount)
+{
+    cmdList->SetPipelineState(pso);
+    cmdList->SetComputeRootSignature(rootSig);
+    UINT groups = (entityCount + 127u) / 128u;
     cmdList->Dispatch(groups, 1, 1);
 }
 

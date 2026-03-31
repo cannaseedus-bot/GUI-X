@@ -3,13 +3,16 @@
 //  MX2LM D3D12 Fused Runtime
 //
 //  Single-pass kernel: QKV → attention → force → MoE routing
-//  → event emission
+//  → LoRA injection → event emission
 //
 //  SM 6.0  |  Shader Model 6.0 minimum
 //  [numthreads(128, 1, 1)]
+//
+//  #define LORA_ENABLED 1  to activate LoRA injection at routing stage
 // ============================================================
 
 #include "common.hlsli"
+#include "lora.hlsli"
 
 // ── Root Constants ────────────────────────────────────────────
 cbuffer RootConstants : register(b0)
@@ -242,6 +245,11 @@ void CSMain(uint3 tid : SV_DispatchThreadID)
         }
     }
     float newSignal = (float)bestExpert;
+
+    // ── LoRA injection ────────────────────────────────────────
+    // Adds rank-r delta to the routing signal before write.
+    // No-op when LORA_ENABLED is not defined.
+    newSignal = LoRAInjectSignal(newSignal, i);
 
     // ── Event Emission ────────────────────────────────────────
     uint  emittedEvent  = 0u;

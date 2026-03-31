@@ -48,7 +48,10 @@ $shaders = @(
     @{ src = "prefix_sum.hlsl";                entry = "CSScan";         out = "prefix_sum.cso"                },
     @{ src = "prefix_sum.hlsl";                entry = "CSAddBlockSums"; out = "prefix_sum_add.cso"            },
     # Debug
-    @{ src = "debug_visualize.hlsl";           entry = "CSMain";         out = "debug_visualize.cso"           }
+    @{ src = "debug_visualize.hlsl";           entry = "CSMain";         out = "debug_visualize.cso"           },
+    # Training
+    @{ src = "adamw.hlsl";                     entry = "CSAdamW";        out = "adamw.cso"                     },
+    @{ src = "adamw.hlsl";                     entry = "CSLoRAUpdate";   out = "lora_update.cso"               }
 )
 
 # ── Setup ─────────────────────────────────────────────────────

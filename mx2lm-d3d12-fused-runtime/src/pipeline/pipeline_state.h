@@ -13,7 +13,10 @@ enum class ShaderType {
     GridBuildScan,
     GridBuildScatter,
     PrefixSum,
+    PrefixSumAddBlocks,
     DebugVisualize,
+    AdamW,
+    LoRAUpdate,
 };
 
 class PipelineState {
