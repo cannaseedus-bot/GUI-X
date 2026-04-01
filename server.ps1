@@ -14,6 +14,12 @@ $script:globalChat   = [System.Collections.Generic.List[hashtable]]::new()
 $script:dmMessages   = [System.Collections.Generic.List[hashtable]]::new()
 $script:presence     = @{}
 
+# ── Graph inference stores ────────────────────────────────────
+# SHA256 → cached output graph (JSON string)
+$script:graphCache   = [System.Collections.Generic.Dictionary[string,string]]::new()
+$script:graphLRU     = [System.Collections.Generic.List[string]]::new()
+$script:GRAPH_CACHE_MAX = 2048
+
 # ── MIME map ─────────────────────────────────────────────────
 $MimeTypes = @{
     '.html' = 'text/html; charset=utf-8'
@@ -31,6 +37,9 @@ $MimeTypes = @{
     '.ttf'  = 'font/ttf'
     '.zip'  = 'application/zip'
     '.txt'  = 'text/plain; charset=utf-8'
+    '.wasm' = 'application/wasm'
+    '.wat'  = 'text/plain; charset=utf-8'
+    '.xml'  = 'application/xml; charset=utf-8'
 }
 
 # ── Helpers ──────────────────────────────────────────────────
@@ -208,6 +217,133 @@ function Handle-DmChat($req, $res) {
     $res.StatusCode = 405; $res.Close()
 }
 
+# ── Graph: SHA256 helper ──────────────────────────────────────
+function Compute-Sha256([string]$str) {
+    $sha   = [System.Security.Cryptography.SHA256]::Create()
+    $bytes = [System.Text.Encoding]::UTF8.GetBytes($str)
+    $hash  = $sha.ComputeHash($bytes)
+    $sha.Dispose()
+    return ([System.BitConverter]::ToString($hash) -replace '-','').ToLower()
+}
+
+# ── Graph: JS-level 8D inference (pure PS, deterministic) ─────
+# Mirrors tensor_graph.js stepJS() logic server-side.
+function Step-Graph8D([hashtable]$graphObj) {
+    $nodes    = $graphObj['clusters']
+    $edges    = @($graphObj['edges'])
+    $step     = [int]($graphObj['step'] ?? 0)
+    $epsilon  = 1e-5
+    $forceMax = 1e4
+
+    # Flatten all nodes into id→node map
+    $nodeMap = @{}
+    foreach ($clusterKey in $nodes.Keys) {
+        foreach ($n in $nodes[$clusterKey]) {
+            $nodeMap[[string]$n['id']] = $n
+        }
+    }
+
+    foreach ($nodeId in $nodeMap.Keys) {
+        $node = $nodeMap[$nodeId]
+        $ctx  = @(0.0, 0.0, 0.0)
+
+        # Accumulate weighted context from incoming attention edges
+        foreach ($e in $edges) {
+            if ([string]$e['to'] -eq $nodeId -and $e['type'] -eq 'attention') {
+                $fromNode = $nodeMap[[string]$e['from']]
+                if ($fromNode) {
+                    $w = [float]$e['weight']
+                    $ctx[0] += $w * [float]$fromNode['px']
+                    $ctx[1] += $w * [float]$fromNode['py']
+                    $ctx[2] += $w * [float]$fromNode['pz']
+                }
+            }
+        }
+
+        # Force = context - self_pos, clamped
+        $node['fx'] = [math]::Max(-$forceMax, [math]::Min($forceMax, $ctx[0] - [float]$node['px']))
+        $node['fy'] = [math]::Max(-$forceMax, [math]::Min($forceMax, $ctx[1] - [float]$node['py']))
+        $node['fz'] = [math]::Max(-$forceMax, [math]::Min($forceMax, $ctx[2] - [float]$node['pz']))
+
+        # Signal = best gate score index (argmax of d0..d7)
+        $bestD = -1e9; $bestK = 0
+        for ($k = 0; $k -lt 8; $k++) {
+            $dv = [float]($node["d$k"] ?? 0)
+            if ($dv -gt $bestD) { $bestD = $dv; $bestK = $k }
+        }
+        $node['signal'] = $bestK
+    }
+
+    # Rebuild clusters by expert (argmax)
+    $newClusters = @{}
+    for ($e = 0; $e -lt 8; $e++) { $newClusters["$e"] = @() }
+    foreach ($n in $nodeMap.Values) {
+        $exp = [int]($n['signal'] ?? 0) % 8
+        $newClusters["$exp"] += $n
+    }
+
+    $graphObj['clusters'] = $newClusters
+    $graphObj['step']     = $step + 1
+    return $graphObj
+}
+
+# ── Graph handlers ────────────────────────────────────────────
+
+function Handle-GraphInfer($req, $res) {
+    if ($req.HttpMethod.ToUpper() -eq 'OPTIONS') { Send-Json $res @{}; return }
+    if ($req.HttpMethod.ToUpper() -ne 'POST')    { $res.StatusCode = 405; $res.Close(); return }
+
+    $body = Read-Body $req
+    if (-not $body) { Send-Json $res @{ error = 'empty body' } 400; return }
+
+    # Check cache by input hash
+    $canonical = ($body | ConvertTo-Json -Depth 15 -Compress)
+    $inputHash = Compute-Sha256 $canonical
+
+    if ($script:graphCache.ContainsKey($inputHash)) {
+        $cached = $script:graphCache[$inputHash] | ConvertFrom-Json -AsHashtable
+        $cached['_fromCache'] = $true
+        Send-Json $res $cached
+        return
+    }
+
+    # Run inference
+    $result    = Step-Graph8D $body
+    $outJson   = $result | ConvertTo-Json -Depth 15 -Compress
+    $outHash   = Compute-Sha256 $outJson
+    $result['sha256'] = $outHash
+
+    # Store in LRU cache
+    if ($script:graphCache.Count -ge $script:GRAPH_CACHE_MAX) {
+        $oldest = $script:graphLRU[0]
+        $script:graphLRU.RemoveAt(0)
+        $script:graphCache.Remove($oldest)
+    }
+    $script:graphCache[$inputHash] = ($result | ConvertTo-Json -Depth 15 -Compress)
+    $script:graphLRU.Add($inputHash)
+
+    Send-Json $res $result
+}
+
+function Handle-GraphHash($req, $res) {
+    if ($req.HttpMethod.ToUpper() -eq 'OPTIONS') { Send-Json $res @{}; return }
+    if ($req.HttpMethod.ToUpper() -ne 'POST')    { $res.StatusCode = 405; $res.Close(); return }
+
+    $body      = Read-Body $req
+    $canonical = ($body | ConvertTo-Json -Depth 15 -Compress)
+    $hash      = Compute-Sha256 $canonical
+    Send-Json $res @{ sha256 = $hash }
+}
+
+function Handle-GraphFetch($req, $res, [string]$hash) {
+    if ($script:graphCache.ContainsKey($hash)) {
+        $cached = $script:graphCache[$hash] | ConvertFrom-Json -AsHashtable
+        Send-Json $res $cached
+    } else {
+        Send-Json $res @{ error = 'not found' } 404
+    }
+}
+
 # ── Main Request Dispatcher ───────────────────────────────────
 function Dispatch($req, $res) {
     $url    = $req.Url.AbsolutePath.TrimEnd('/')
@@ -216,11 +352,24 @@ function Dispatch($req, $res) {
     Write-Log "$method $($req.Url.PathAndQuery)"
 
     switch -Regex ($url) {
-        '^/players$'     { Handle-Players  $req $res; return }
-        '^/presence$'    { Handle-Presence $req $res; return }
-        '^/chat_global$' { Handle-GlobalChat $req $res; return }
-        '^/chat_dm$'     { Handle-DmChat   $req $res; return }
-        '^/health$'      { Send-Json $res @{ status = 'ok'; time = (Get-Date -Format 'o') }; return }
+        '^/players$'          { Handle-Players    $req $res; return }
+        '^/presence$'         { Handle-Presence   $req $res; return }
+        '^/chat_global$'      { Handle-GlobalChat $req $res; return }
+        '^/chat_dm$'          { Handle-DmChat     $req $res; return }
+        '^/graph/infer$'      { Handle-GraphInfer $req $res; return }
+        '^/graph/hash$'       { Handle-GraphHash  $req $res; return }
+        '^/graph/([0-9a-f]+)$' {
+            $hash = [regex]::Match($url, '^/graph/([0-9a-f]+)$').Groups[1].Value
+            Handle-GraphFetch $req $res $hash; return
+        }
+        '^/health$'           {
+            Send-Json $res @{
+                status      = 'ok'
+                time        = (Get-Date -Format 'o')
+                graph_cache = $script:graphCache.Count
+            }
+            return
+        }
     }
 
     # Static file serving

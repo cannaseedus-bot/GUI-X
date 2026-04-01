@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  tensor_graph_schema.xml
+  MX2LM  |  8D Tensor Node Cluster  —  Compute Graph Format
+
+  PURPOSE: Machine-readable structured format for 8D entity/expert topology.
+           NOT for rendering. Used by WASM sandbox, JSON REST, SHA256 runtimes.
+
+  DIMENSIONS (per node):
+    d0..d3  gate scores for experts 0-3  (float, softmax-normalized)
+    d4..d7  gate scores for experts 4-7  (float, softmax-normalized)
+    These 8 values ARE the routing probability simplex over 8 MoE experts.
+
+  EDGE WEIGHT: attention score (float, softmax-normalized over neighbors)
+
+  SHA256: every node, edge, and graph-level state is content-addressed.
+          Same 8D state → same SHA256 → same cached result (deterministic).
+-->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema"
+           targetNamespace="urn:mx2lm:tensor-graph:v0.1"
+           xmlns:tg="urn:mx2lm:tensor-graph:v0.1"
+           elementFormDefault="qualified">
+
+  <!-- Root element -->
+  <xs:element name="tensor-graph">
+    <xs:complexType>
+      <xs:sequence>
+        <xs:element name="meta"    type="tg:MetaType"    minOccurs="0"/>
+        <xs:element name="cluster" type="tg:ClusterType" minOccurs="1" maxOccurs="unbounded"/>
+      </xs:sequence>
+      <xs:attribute name="version"      type="xs:string"       use="required" fixed="0.1"/>
+      <xs:attribute name="dim"          type="xs:positiveInteger" use="required" fixed="8"/>
+      <xs:attribute name="entity-count" type="xs:nonNegativeInteger" use="required"/>
+      <xs:attribute name="step"         type="xs:nonNegativeInteger" default="0"/>
+      <xs:attribute name="sha256"       type="xs:string"/>  <!-- SHA256 of entire graph state -->
+    </xs:complexType>
+  </xs:element>
+
+  <!-- Metadata (dict key=value, mirrors SCXQ2 DICT section) -->
+  <xs:complexType name="MetaType">
+    <xs:sequence>
+      <xs:element name="entry" minOccurs="0" maxOccurs="unbounded">
+        <xs:complexType>
+          <xs:attribute name="k" type="xs:string" use="required"/>
+          <xs:attribute name="v" type="xs:string" use="required"/>
+        </xs:complexType>
+      </xs:element>
+    </xs:sequence>
+  </xs:complexType>
+
+  <!-- Expert cluster: groups all entities routed to the same expert -->
+  <xs:complexType name="ClusterType">
+    <xs:sequence>
+      <xs:element name="node" type="tg:NodeType" minOccurs="0" maxOccurs="unbounded"/>
+      <xs:element name="edge" type="tg:EdgeType" minOccurs="0" maxOccurs="unbounded"/>
+    </xs:sequence>
+    <xs:attribute name="expert"    type="xs:nonNegativeInteger" use="required"/>  <!-- 0..7 -->
+    <xs:attribute name="gate-mean" type="xs:float"/>     <!-- mean gate score in this cluster -->
+    <xs:attribute name="sha256"    type="xs:string"/>    <!-- SHA256 of cluster state -->
+  </xs:complexType>
+
+  <!-- 8D tensor node (one entity) -->
+  <xs:complexType name="NodeType">
+    <xs:attribute name="id"     type="xs:nonNegativeInteger" use="required"/>
+    <!-- 8D gate score vector (experts 0-7) -->
+    <xs:attribute name="d0"     type="xs:float" use="required"/>
+    <xs:attribute name="d1"     type="xs:float" use="required"/>
+    <xs:attribute name="d2"     type="xs:float" use="required"/>
+    <xs:attribute name="d3"     type="xs:float" use="required"/>
+    <xs:attribute name="d4"     type="xs:float" use="required"/>
+    <xs:attribute name="d5"     type="xs:float" use="required"/>
+    <xs:attribute name="d6"     type="xs:float" use="required"/>
+    <xs:attribute name="d7"     type="xs:float" use="required"/>
+    <!-- Spatial state -->
+    <xs:attribute name="px"     type="xs:float" use="required"/>
+    <xs:attribute name="py"     type="xs:float" use="required"/>
+    <xs:attribute name="pz"     type="xs:float" use="required"/>
+    <xs:attribute name="fx"     type="xs:float" default="0"/>
+    <xs:attribute name="fy"     type="xs:float" default="0"/>
+    <xs:attribute name="fz"     type="xs:float" default="0"/>
+    <!-- Scalar state -->
+    <xs:attribute name="signal" type="xs:float" default="0"/>
+    <xs:attribute name="event"  type="xs:nonNegativeInteger" default="0"/>
+    <!-- Content address -->
+    <xs:attribute name="sha256" type="xs:string"/>
+  </xs:complexType>
+
+  <!-- Directed attention edge between two entities -->
+  <xs:complexType name="EdgeType">
+    <xs:attribute name="from"   type="xs:nonNegativeInteger" use="required"/>
+    <xs:attribute name="to"     type="xs:nonNegativeInteger" use="required"/>
+    <xs:attribute name="weight" type="xs:float"              use="required"/>
+    <xs:attribute name="type"   use="required">
+      <xs:simpleType>
+        <xs:restriction base="xs:string">
+          <xs:enumeration value="attention"/>
+          <xs:enumeration value="force"/>
+          <xs:enumeration value="event"/>
+        </xs:restriction>
+      </xs:simpleType>
+    </xs:attribute>
+  </xs:complexType>
+
+</xs:schema>
